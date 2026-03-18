@@ -1,0 +1,182 @@
+<!doctype html>
+<!--
+  GeoPoints → CSV (Native)
+  Copyright © 2026 Devin Frederick
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>GeoPoints → CSV (Native)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700&family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./lib/leaflet.css" />
+  <link rel="stylesheet" href="./lib/leaflet.draw.css" />
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="header">
+      <div>
+        <h1>GeoPoints <span class="arr">→</span> CSV</h1>
+        <p class="sub">KML + KMZ supported.</p>
+      </div>
+      <div class="headerRight">
+        <div class="pill" id="statusPill">Idle</div>
+      </div>
+    </header>
+
+    <section class="card">
+      <div class="uploadRow">
+        <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Drop files here or browse">
+          <div class="dz-inner">
+            <div class="dz-title">Drop KML/KMZ files here</div>
+            <div class="dz-sub">
+              or
+              <label class="link">
+                <input
+                  id="fileInput"
+                  type="file"
+                  multiple
+                  accept=".kml,.kmz,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz"
+                />
+                browse
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid">
+        <label class="field">
+          <span>Delimiter</span>
+          <select id="delimiter">
+            <option value=",">Comma (,)</option>
+            <option value=";">Semicolon (;)</option>
+            <option value="\t">Tab</option>
+          </select>
+        </label>
+
+        <label class="field checkbox">
+          <input id="includeHeader" type="checkbox" checked />
+          <span>Include header</span>
+        </label>
+
+        <label class="field checkbox">
+          <input id="zipOutput" type="checkbox" checked />
+          <span>Download as ZIP (automatic for multiple layers)</span>
+        </label>
+
+        <label class="field checkbox">
+          <input id="keepCrossingLines" type="checkbox" />
+          <span>Keep lines/polylines crossing bounding box</span>
+        </label>
+
+        <label class="field checkbox">
+          <input id="useDefaultPrecision" type="checkbox" checked />
+          <span>Use default precision</span>
+        </label>
+
+        <label class="field" id="precisionField" hidden>
+          <span>Precision (decimal places)</span>
+          <input id="precision" type="number" min="0" max="10" value="6" />
+        </label>
+      </div>
+
+      <div class="actions">
+        <button id="btnConvert" disabled>Convert</button>
+        <button id="btnClear" class="ghost" disabled>Clear</button>
+      </div>
+
+      <div id="progressWrap" class="progressWrap" hidden>
+        <div id="progressBar" class="progressBar"></div>
+      </div>
+
+      <!-- Layers selection -->
+      <div class="layersPanel" id="layersPanel" hidden>
+        <div class="row">
+          <div>
+            <div class="muted">Layers</div>
+            <div class="muted small" id="layersHint">Select layers to include in export. Map display is controlled by the dropdown on the map.</div>
+          </div>
+          <div class="fieldBtns">
+            <button id="btnSelectAllLayers" class="ghost smallBtn" type="button">Select all</button>
+            <button id="btnDeselectAllLayers" class="ghost smallBtn" type="button">Deselect all</button>
+          </div>
+        </div>
+        <div id="layersList" class="layersList"></div>
+      </div>
+
+      <!-- Fields keep/drop selection -->
+      <div class="fieldsPanel" id="fieldsPanel" hidden>
+        <div class="row">
+          <div>
+            <div class="muted">Fields</div>
+            <div class="muted small" id="fieldsHint">Select which columns to keep in the output CSV.</div>
+          </div>
+
+          <div class="fieldBtns">
+            <button id="btnKeepAll" class="ghost smallBtn" type="button">Keep all</button>
+            <button id="btnDropAll" class="ghost smallBtn" type="button">Drop all</button>
+            <button id="btnKeepGeo" class="ghost smallBtn" type="button">Keep geo + IDs</button>
+          </div>
+        </div>
+
+        <div id="fieldsList" class="fieldsList"></div>
+      </div>
+
+      <!-- Map view with drawing tools -->
+      <div class="mapPanel" id="mapPanel">
+        <div class="row">
+          <div>
+            <div class="muted">Map</div>
+            <div class="muted small" id="mapHint">Draw a rectangle or polygon to filter points. Drawing a new shape replaces the previous filter. When "Keep lines/polylines crossing bounding box" is enabled, lines that partially cross the filter area are retained.</div>
+          </div>
+          <div class="fieldBtns">
+            <select id="mapLayerSelect" class="ghost smallBtn" hidden>
+              <option value="">All layers</option>
+            </select>
+            <button id="btnUploadPolygon" class="ghost smallBtn" type="button">Upload polygon</button>
+            <input id="polygonFileInput" type="file" accept=".kml,.kmz,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz" hidden />
+            <select id="polygonLayerSelect" class="ghost smallBtn" hidden>
+              <option value="">Use layer as filter…</option>
+            </select>
+            <button id="btnClearFilter" class="ghost smallBtn" type="button" disabled>Clear filter</button>
+          </div>
+        </div>
+        <div id="map" class="mapContainer"></div>
+        <div class="muted small" id="mapStatus"></div>
+      </div>
+
+      <div class="hr"></div>
+
+      <div class="row">
+        <div class="muted">Selected files</div>
+        <div class="muted" id="summary"></div>
+      </div>
+      <div id="fileList" class="fileList"></div>
+
+      <div class="logWrap">
+        <div class="muted">Log</div>
+        <pre id="log" class="log" aria-live="polite"></pre>
+      </div>
+    </section>
+
+    <footer class="footer muted">
+      <div>Copyright © 2026 Devin Frederick</div>
+    </footer>
+  </main>
+
+  <script src="./lib/leaflet.js"></script>
+  <script src="./lib/leaflet.draw.js"></script>
+  <script type="module" src="./app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(function(err) {
+        console.warn('[SW] Registration failed:', err);
+      });
+    }
+  </script>
+</body>
+</html>

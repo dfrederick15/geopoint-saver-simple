@@ -1,0 +1,17 @@
+{
+  "name": "geopoint-saver-simple",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --env-file=.env --test tests/*.test.js"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.9.0",
+    "express": "^4.19.0",
+    "express-rate-limit": "^8.3.1",
+    "fast-xml-parser": "^5.5.5",
+    "multer": "^1.4.5-lts.1"
+  }
+}
