@@ -77,6 +77,7 @@ ADMIN_PROXY_SECRET=your-secret-here
 | GET    | `/admin/stats`   | Active sessions, log stats (privileged IPs only)              |
 | GET    | `/admin/logs`    | Live log viewer (privileged IPs only)                         |
 | GET    | `/admin/logs/stream` | SSE stream of access log entries (privileged IPs only)    |
+| GET    | `/admin/data`        | JSON: uptime, load averages, active sessions, conversion count, log stats (privileged IPs only) |
 
 ## Security
 
