@@ -240,27 +240,3 @@ sessions: Map<sessionId (hex UUID), {
 MAX_SESSIONS = 50         // refuse /inspect if at capacity
 TTL          = 1 hour     // sessions.delete() runs on a 5-min interval
 ```
-
----
-
-## 9. Logging
-
-Every `/inspect` and `/convert` call writes a structured JSON entry:
-
-- **In memory:** `recentLogs` ring buffer (last 1,000 entries), seeded from disk on startup.
-- **On disk:** appended to `DATA_DIR/logs/access.log` (JSONL format).
-- **Live stream:** `GET /admin/logs/stream` is a Server-Sent Events endpoint; new entries are pushed to all connected clients as they arrive.
-
-Log entry shape:
-```js
-{
-  id:     42,
-  ts:     "2026-03-19T15:00:00.000Z",
-  ip:     "1.2.3.4",
-  userId: "a1b2c3d4…",
-  files:  ["buildings.kmz"],
-  status: "ok",         // inspect | ok | error
-  action: "upload",     // upload | polygon | convert
-  detail: "1 file · 12,345 rows · 8 fields · 3 layers",
-}
-```
