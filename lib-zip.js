@@ -3,15 +3,27 @@
   Copyright © 2026 Devin Frederick
 */
 
-// Minimal ZIP writer (STORE method, no compression)
-
+/**
+ * Minimal in-memory ZIP writer using the STORE method (no compression).
+ *
+ * Usage:
+ *   const zip = new ZipWriter();
+ *   zip.addFile('data.csv', csvBytes);
+ *   zip.addFile('other.kml', kmlBytes);
+ *   const zipBytes = zip.finish(); // Uint8Array
+ */
 export class ZipWriter {
   constructor() {
-    this.files = []; // {name, bytes, crc32, localOffset}
-    this.chunks = [];
-    this.offset = 0;
+    this.files = [];   // metadata + bytes for each added entry
+    this.chunks = [];  // accumulated byte chunks for the archive body
+    this.offset = 0;   // running byte offset (used to record local header positions)
   }
 
+  /**
+   * Add a file entry to the archive.
+   * @param {string}     name  - File path inside the ZIP (slashes normalised, no traversal).
+   * @param {Uint8Array} bytes - Raw file content (not compressed).
+   */
   addFile(name, bytes) {
     if (!(bytes instanceof Uint8Array)) {
       throw new Error("bytes must be Uint8Array");
@@ -38,6 +50,11 @@ export class ZipWriter {
     });
   }
 
+  /**
+   * Write the central directory and end-of-central-directory record, then
+   * concatenate all chunks into a single Uint8Array ZIP archive.
+   * @returns {Uint8Array}
+   */
   finish() {
     const centralDirStart = this.offset;
 
@@ -76,6 +93,7 @@ export class ZipWriter {
   }
 }
 
+/** Sanitise a filename for use inside a ZIP: forward slashes only, no path traversal, never empty. */
 function normalizeName(name) {
   name = name.replace(/\\/g, "/");
   name = name.replace(/^(\.\.\/)+/g, "");
@@ -166,6 +184,7 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
+/** Standard CRC-32 using the Castagnoli polynomial (required by the ZIP spec). */
 function crc32(bytes) {
   let c = 0xFFFFFFFF;
   for (let i = 0; i < bytes.length; i++) {

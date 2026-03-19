@@ -10,7 +10,6 @@ A simplified, self-contained web application for converting KML and KMZ files to
 - Supports spatial filtering via drawn rectangles or polygons
 - Exports selected layers and fields as CSV (or KML for line geometry)
 - Multiple files/layers are bundled into a ZIP archive automatically
-- End-to-end encryption available via ECDH key exchange (`/crypto-init`)
 
 ## Stack
 
@@ -69,12 +68,57 @@ DATA_DIR=/opt/geopoint-saver-simple
 | POST   | `/inspect`       | Upload KML/KMZ files; returns parsed rows, fields, and layers |
 | POST   | `/convert`       | Convert a parsed session to CSV/KML/ZIP using a `sessionId`   |
 | POST   | `/parse-polygon` | Upload a KML/KMZ file; extract the first polygon for spatial filtering |
-| POST   | `/crypto-init`   | ECDH key exchange to establish an end-to-end encrypted session |
 | GET    | `/load`          | Returns current server load percentage                        |
+
+## Upload Data Flow
+
+```mermaid
+flowchart TD
+    A([Browser\ndrops or selects file]) --> B["POST /inspect\nmultipart/form-data"]
+    B --> C[Rate limiter\n30 req / 15 min]
+    C --> D[Multer\nreads file into memory]
+    D --> E{KMZ or KML?}
+
+    E -->|KMZ| F[Walk ZIP local headers\nextract .kml entries\ndecompress DEFLATE]
+    E -->|KML| G[Decode UTF-8 text]
+
+    F --> H[fast-xml-parser\nparse XML]
+    G --> H
+
+    H --> I[Walk Document / Folder / Placemark tree\nextract coordinates + ExtendedData]
+    I --> J[Flat rows array\nstored in server session\n30-min TTL]
+    J --> K[Return sessionId · rows · fields · layers]
+
+    K --> L([Browser\nrenders map + field/layer picker])
+
+    L --> M["POST /convert\nsessionId + field/layer selection + options"]
+    M --> N[Rate limiter\n60 req / 15 min]
+    N --> O[Session lookup]
+
+    O --> P{Spatial filter?}
+    P -->|Rectangle| Q[Bounding-box test]
+    P -->|Polygon| R[Ray-cast point-in-polygon]
+    P -->|None| S[All rows pass]
+
+    Q --> T{Line geometry?}
+    R --> T
+    S --> T
+
+    T -->|Yes| U[rowsToKml\nreconstruct Placemarks]
+    T -->|No| V[rowsToCsv\nserialise selected fields]
+
+    U --> W{Multiple outputs?}
+    V --> W
+
+    W -->|Yes| X[ZipWriter\nbundle files — STORE method]
+    W -->|No| Y[Single file]
+
+    X --> Z([Download .zip])
+    Y --> Z2([Download .csv or .kml])
+```
 
 ## Security
 
-- **End-to-end encryption:** Clients can perform an ECDH key exchange via `POST /crypto-init`. Subsequent requests using the returned `sid` header have their bodies encrypted with AES-256-GCM; responses are encrypted in kind.
 - **No cookies or sessions stored client-side:** User identity uses a UUID stored in `localStorage` and sent as `X-User-Id`.
 - **Rate limiting:** `/inspect` is limited to 30 requests per 15 minutes per IP; `/convert` to 60 requests per 15 minutes.
 - **Security headers:** `X-Content-Type-Options`, `X-Frame-Options`, and a strict `Content-Security-Policy` are set on every response.

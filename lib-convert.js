@@ -8,6 +8,16 @@ const STANDARD_FIELDS = new Set(['source', 'layer', 'geometry_type', 'placemark_
 
 // ── CSV ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Serialize a row array to CSV bytes.
+ *
+ * @param {object[]} rows        - Parsed placemark rows from the session.
+ * @param {string[]} fieldKeys   - Ordered list of field keys to include as columns.
+ * @param {string}   delimiter   - Column separator (usually ',' or '\t').
+ * @param {boolean}  includeHeader - Whether to prepend a header row.
+ * @param {number}   precision   - Decimal places for numeric values (lat/lon/alt).
+ * @returns {Uint8Array} UTF-8 encoded CSV bytes.
+ */
 export function rowsToCsv(rows, fieldKeys, delimiter, includeHeader, precision) {
   const fmt = (n) => n.toFixed(precision);
   const lines = [];
@@ -29,6 +39,16 @@ export function rowsToCsv(rows, fieldKeys, delimiter, includeHeader, precision) 
   return new TextEncoder().encode(lines.join('\n') + '\n');
 }
 
+/**
+ * Merge multiple per-layer CSV byte arrays into a single CSV, stripping
+ * per-file headers and prepending one unified header row.
+ *
+ * @param {{bytes:Uint8Array}[]} items - Array of CSV output objects from rowsToCsv.
+ * @param {string}   delimiter
+ * @param {boolean}  includeHeader
+ * @param {string[]} fieldKeys - Used to write the merged header row.
+ * @returns {Uint8Array}
+ */
 export function combineCsv(items, delimiter, includeHeader, fieldKeys) {
   const lines = [];
   if (includeHeader) {
@@ -54,6 +74,10 @@ function escapeCell(s, delimiter) {
 
 // ── KML ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Return true if any row in the set has line geometry (LineString or LinearRing).
+ * Used to decide whether to emit KML (preserves geometry) instead of CSV.
+ */
 export function layerHasLines(rows) {
   return rows.some(r => r.geometry_type === 'LineString' || r.geometry_type === 'LinearRing');
 }
@@ -64,6 +88,18 @@ export function xmlEscape(s) {
   );
 }
 
+/**
+ * Reconstruct a KML document from a filtered row array.
+ *
+ * Rows are grouped back into their original Placemarks using placemark_uid.
+ * Each Placemark gets its ExtendedData re-emitted as <Data> elements and its
+ * coordinates serialised into the appropriate geometry element (Point,
+ * LineString, or Polygon/LinearRing).
+ *
+ * @param {object[]} rows    - Filtered rows (all from a single layer).
+ * @param {string}   docName - <Document><name> value in the output KML.
+ * @returns {Uint8Array} UTF-8 encoded KML bytes.
+ */
 export function rowsToKml(rows, docName) {
   const pmMap = new Map();
   for (const r of rows) {
@@ -130,8 +166,23 @@ export function rowsToKml(rows, docName) {
 
 // ── Spatial filter ────────────────────────────────────────────────────────────
 
-// filter: null | { type: 'rectangle', bounds: [[latSW,lngSW],[latNE,lngNE]] }
-//                | { type: 'polygon',   coords: [[lat,lng],...] }
+/**
+ * Filter rows to only those whose coordinates fall inside the given region.
+ *
+ * filter shapes:
+ *   null                                                  → return all rows
+ *   { type: 'rectangle', bounds: [[latSW,lngSW],[latNE,lngNE]] }
+ *   { type: 'polygon',   coords: [[lat,lng],...] }        → ray-cast test
+ *
+ * keepCrossingLines: if true, any Placemark that has at least one point inside
+ * the filter is kept in full (including points outside), so line geometry is
+ * not split at the filter boundary.
+ *
+ * @param {object[]} rows
+ * @param {object|null} filter
+ * @param {boolean} keepCrossingLines
+ * @returns {object[]}
+ */
 export function applySpatialFilter(rows, filter, keepCrossingLines) {
   if (!filter) return rows;
 
@@ -165,8 +216,13 @@ function isPointInFilter(lat, lon, filter) {
   return true;
 }
 
+/**
+ * Ray-casting point-in-polygon test.
+ * Counts edge crossings along a horizontal ray from (lat, lon) to +∞ longitude.
+ * An odd count means the point is inside.
+ * coords: [[lat, lng], ...]  — same winding as Leaflet's latlng array
+ */
 function pointInPolygon(lat, lon, coords) {
-  // coords: [[lat, lng], ...]  — same winding as Leaflet's latlng array
   let inside = false;
   for (let i = 0, j = coords.length - 1; i < coords.length; j = i++) {
     const [xi, yi] = coords[i]; // xi=lat, yi=lng

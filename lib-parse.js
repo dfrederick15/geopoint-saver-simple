@@ -36,7 +36,17 @@ function makeParser() {
 
 // ── Public entry points ──────────────────────────────────────────────────────
 
-// Accepts a filename string and a Node Buffer. Returns { rows, fields }.
+/**
+ * Parse a KML or KMZ file buffer into a flat array of coordinate rows.
+ *
+ * KMZ files are unzipped in-memory; each embedded .kml is parsed in turn.
+ * Rows are plain objects with at minimum: source, layer, geometry_type,
+ * placemark_id, name, lat, lon, alt, plus any ExtendedData fields.
+ *
+ * @param {string} filename - Original filename (used to detect .kmz and label rows).
+ * @param {Buffer} buffer   - Raw file bytes.
+ * @returns {Promise<{rows: object[], fields: {key:string, type:string}[]}>}
+ */
 export async function parseKmlBuffer(filename, buffer) {
   const kmls = await readKmlOrKmzToKmls(filename, buffer);
   const multiKml = kmls.length > 1;
@@ -58,8 +68,14 @@ export async function parseKmlBuffer(filename, buffer) {
   return { rows: allRows, fields };
 }
 
-// Accepts a filename string and a Node Buffer.
-// Returns { coords: [[lat, lng], ...] } for the first polygon found, or null.
+/**
+ * Extract the first Polygon from a KML or KMZ buffer.
+ * Used by POST /parse-polygon so the client can draw a spatial filter.
+ *
+ * @param {string} filename - Original filename.
+ * @param {Buffer} buffer   - Raw file bytes.
+ * @returns {Promise<{coords: [number,number][]}|null>} lat/lng pairs, or null if no polygon found.
+ */
 export async function parsePolygonFromKmlBuffer(filename, buffer) {
   const kmls = await readKmlOrKmzToKmls(filename, buffer);
   for (const { text } of kmls) {
@@ -71,6 +87,11 @@ export async function parsePolygonFromKmlBuffer(filename, buffer) {
 
 // ── KMZ extraction ───────────────────────────────────────────────────────────
 
+/**
+ * Dispatch to ZIP extraction or plain KML decode based on filename/magic bytes.
+ * Returns an array of { name, text } objects — one per embedded .kml file.
+ * @returns {Promise<{name:string, text:string}[]>}
+ */
 async function readKmlOrKmzToKmls(filename, buffer) {
   const lower = (filename || '').toLowerCase();
   const isKmz = lower.endsWith('.kmz') || looksLikeZip(buffer);
@@ -86,10 +107,18 @@ async function readKmlOrKmzToKmls(filename, buffer) {
   return [{ name: filename, text: decodeBestEffort(buffer) }];
 }
 
+/** Check for PK magic bytes (0x50 0x4B) — faster than trying to parse as XML. */
 function looksLikeZip(buffer) {
   return buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4B;
 }
 
+/**
+ * Walk a ZIP archive (local file headers) and return the raw bytes of every
+ * entry whose name ends with .kml. Handles both stored (method 0) and DEFLATE
+ * (method 8) compression. Compressed sizes are cross-referenced against the
+ * central directory to handle data-descriptor records (bit 3 flag).
+ * @returns {Promise<{name:string, bytes:Uint8Array}[]>}
+ */
 async function extractAllKmlsFromKmz(buffer) {
   const u8 = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
   let p = 0;
@@ -145,6 +174,19 @@ async function extractAllKmlsFromKmz(buffer) {
 
 // ── KML parsing (fast-xml-parser) ────────────────────────────────────────────
 
+/**
+ * Parse a KML XML string into a flat array of row objects.
+ *
+ * The tree is walked recursively through Document > Folder > Placemark nodes.
+ * Each Placemark can contain multiple geometry types; each coordinate tuple
+ * becomes one row. ExtendedData/SchemaData SimpleData values are merged into
+ * every row produced by that Placemark.
+ *
+ * @param {string} kmlText      - Raw KML XML text.
+ * @param {string} sourceName   - Original filename, stored in row.source.
+ * @param {string} kmlFileLabel - Label used when a KMZ embeds multiple KMLs.
+ * @returns {object[]} Flat array of row objects.
+ */
 function parseRowsFromKml(kmlText, sourceName, kmlFileLabel = '') {
   let result;
   try {
@@ -282,6 +324,10 @@ function findFirstPolygon(obj) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Flatten a KML ExtendedData/SchemaData element into a plain key→value object.
+ * Only SchemaData/SimpleData items are extracted; raw <Data> tags are ignored.
+ */
 function extractExtData(extDataVal) {
   const ext = {};
   if (!extDataVal) return ext;
@@ -296,6 +342,11 @@ function extractExtData(extDataVal) {
   return ext;
 }
 
+/**
+ * Parse a KML <coordinates> text string and push one row per valid tuple.
+ * KML coordinate order is lon,lat[,alt]; rows store lat/lon separately.
+ * Tuples outside the valid WGS-84 range are silently skipped.
+ */
 function pushCoordRows(rawStr, geometry_type, base, rows) {
   if (!rawStr) return;
   for (const t of rawStr.split(/\s+/).filter(Boolean)) {
@@ -336,6 +387,12 @@ function parsePolygonCoordinates(raw) {
   return coords;
 }
 
+/**
+ * Scan all rows and collect unique field keys with their inferred type
+ * ('number' if the first seen value is numeric, otherwise 'text').
+ * Internal fields (placemark_uid) are excluded from the result.
+ * @returns {{key:string, type:string}[]}
+ */
 function inferFields(rows) {
   const map = new Map();
   for (const r of rows) {
@@ -376,6 +433,13 @@ function decodeBestEffort(buffer) {
   }
 }
 
+/**
+ * Scan a ZIP buffer for the End-of-Central-Directory record, then parse
+ * every central directory entry to build a name→{compSize, uncompSize} map.
+ * This is used to resolve compressed sizes for entries that used data
+ * descriptors (bit 3 of the general purpose bit flag) in their local headers.
+ * @returns {Map<string, {compSize:number, uncompSize:number}>}
+ */
 function buildCentralDirectoryOffsets(u8) {
   const map = new Map();
   const minEocd = 22;

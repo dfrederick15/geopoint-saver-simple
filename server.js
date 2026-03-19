@@ -41,7 +41,11 @@ const logStats = { inspects: 0, ok: 0, errors: 0 };
 let logSeq = 0;
 let conversionCount = 0;
 
-// Load recent logs from file on startup
+/**
+ * Seed the in-memory log ring-buffer from the on-disk access.log at startup,
+ * so the admin log viewer shows historical entries immediately after a restart.
+ * Reads the last 1000 lines; silently ignores missing or malformed files.
+ */
 async function loadRecentLogs() {
   try {
     const text = await readFile(LOG_FILE, 'utf8');
@@ -71,15 +75,21 @@ setInterval(() => {
     if (s.createdAt < cutoff) cryptoSessions.delete(sid);
 }, 60_000);
 
+/** Convert a JWK P-256 public key to an uncompressed 65-byte EC point (0x04 || x || y). */
 function jwkToPoint(jwk) {
   const x = Buffer.from(jwk.x, 'base64url');
   const y = Buffer.from(jwk.y, 'base64url');
   return Buffer.concat([Buffer.from([0x04]), x, y]);
 }
+/** Convert an uncompressed 65-byte EC point back to a JWK public key object. */
 function pointToJwk(pt) {
   return { kty: 'EC', crv: 'P-256', x: pt.subarray(1, 33).toString('base64url'), y: pt.subarray(33, 65).toString('base64url') };
 }
 
+/**
+ * AES-256-GCM encrypt. Returns { iv, ct } as base64 strings.
+ * The 16-byte auth tag is appended to the ciphertext before encoding.
+ */
 function cryptoEncrypt(key, plaintext) {
   const iv     = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
@@ -87,6 +97,10 @@ function cryptoEncrypt(key, plaintext) {
   const tag    = cipher.getAuthTag();
   return { iv: iv.toString('base64'), ct: Buffer.concat([ct, tag]).toString('base64') };
 }
+/**
+ * AES-256-GCM decrypt. Expects the last 16 bytes of ct64 to be the auth tag.
+ * Throws if the tag does not verify (tampered ciphertext).
+ */
 function cryptoDecrypt(key, iv64, ct64) {
   const iv        = Buffer.from(iv64, 'base64');
   const ctWithTag = Buffer.from(ct64, 'base64');
@@ -159,7 +173,12 @@ app.use((req, res, next) => {
   next();
 });
 
-// Bypass multer for encrypted FormData; reconstruct req.files from decrypted parts
+/**
+ * Wrap a multer middleware to also handle pre-decrypted FormData payloads.
+ * When a request body carries _type:'formdata' (set by the crypto middleware
+ * after decrypting an E2E-encrypted upload), multer is skipped and req.files
+ * is reconstructed from the already-decoded base64 parts array.
+ */
 function smartUpload(multerMw) {
   return (req, res, next) => {
     if (req.body?._type === 'formdata') {
@@ -239,6 +258,11 @@ function isPrivilegedIp(req) {
 
 const logClients = new Set();
 
+/**
+ * Append a structured log entry to the in-memory ring-buffer and the on-disk
+ * JSONL access.log, then push it to any connected SSE log-stream clients.
+ * Non-fatal: errors are swallowed so a logging failure never breaks a request.
+ */
 async function writeLog(entry) {
   try {
     logSeq++;
@@ -788,15 +812,21 @@ const sessionCleanupInterval = setInterval(() => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Remove the file extension from a filename, leaving the base name. */
 function stripExt(name) {
   const i = name.lastIndexOf('.');
   return i > 0 ? name.slice(0, i) : name;
 }
 
+/** Sanitise a string for use as a filesystem-safe output filename segment. */
 function safeName(s) {
   return s.replace(/[^\w\-\. ]+/g, '_').trim().replace(/\s+/g, '_') || 'output';
 }
 
+/**
+ * Extract the real client IP, preferring Cloudflare's cf-connecting-ip header,
+ * then x-forwarded-for (first entry), then the raw socket address.
+ */
 function getClientIp(req) {
   return req.headers['cf-connecting-ip']
     || req.headers['x-forwarded-for']?.split(',')[0].trim()
@@ -805,6 +835,10 @@ function getClientIp(req) {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Read the X-User-Id header (a UUID set by the client in localStorage) for
+ * log correlation. Falls back to a fresh UUID if absent or malformed.
+ */
 function getUserId(req) {
   const id = req.headers['x-user-id'];
   return (id && UUID_RE.test(id)) ? id : randomUUID();
@@ -812,6 +846,11 @@ function getUserId(req) {
 
 const preferredOrder = ['source', 'layer', 'geometry_type', 'placemark_id', 'name', 'lat', 'lon', 'alt'];
 
+/**
+ * Sort field descriptors so that known structural fields (source, layer,
+ * geometry_type, etc.) appear first in a fixed order, with unknown/custom
+ * ExtendedData fields sorted alphabetically after them.
+ */
 function sortFields(fields) {
   return fields.slice().sort((a, b) => {
     const ia = preferredOrder.indexOf(a.key);
