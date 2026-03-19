@@ -264,24 +264,3 @@ Log entry shape:
   detail: "1 file · 12,345 rows · 8 fields · 3 layers",
 }
 ```
-
----
-
-## 10. Admin Pages (localhost / Tailscale only)
-
-All `/admin/*` routes are guarded by `isPrivilegedIp()`:
-
-| IP source | Allowed |
-|-----------|---------|
-| 127.0.0.1 / ::1 (loopback) | Yes |
-| 100.64.0.0/10 (Tailscale CGNAT range) | Yes |
-| Reverse proxy with `X-Admin-Proxy-Secret` header | Yes |
-| All other IPs | 403 |
-
-| Route | What it shows |
-|-------|---------------|
-| `GET /admin` | Admin home (nav links) |
-| `GET /admin/stats` | Active sessions, server load, conversion counts |
-| `GET /admin/logs` | Live log viewer (SSE-driven, resizable/reorderable columns, ISP lookup) |
-| `GET /admin/logs/stream` | Raw SSE stream used by the log viewer |
-| `GET /admin/data` | JSON data endpoint polled by `/admin/stats` |
